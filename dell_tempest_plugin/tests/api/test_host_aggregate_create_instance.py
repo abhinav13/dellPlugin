@@ -21,6 +21,8 @@ class TestHostAggreagateCreateInstance(base.BaseDellTempestTestCase):
         self.cli_dir = '/bin'
         self.cliclient = cli.CLIClient(username=self.os_user_name, password=self.os_password, tenant_name=self.os_tenant_name,
                                        uri=self.os_auth_url, cli_dir='/bin/')
+        self.ag_zone = ''
+        self.host_name = None
 
     def create_host_aggregate(self, name="", availabilityzone=""):
         if not name:
@@ -36,29 +38,41 @@ class TestHostAggreagateCreateInstance(base.BaseDellTempestTestCase):
     def get_compute_host_details(self):
         raw_output = self.cliclient.nova(action='host-list')
         all_hosts = output_parser.listing(raw_output)
-        LOG.info("get_compute_host_details raw output %s", raw_output)
-        LOG.info("get_compute_host_details listing %s type %s", str(all_hosts),str(type(all_hosts)))
+        LOG.info("get_compute_host_details listing %s type %s", str(all_hosts), str(type(all_hosts)))
 
         self.assertNotEmpty(all_hosts)
-        #Filter the host list for compute nodes only
+        # Filter the host list for compute nodes only
         compute_hosts = list(filter(lambda x: str(x['service']).lower() == 'compute', all_hosts))
         LOG.info("compute_hosts %s", str(compute_hosts))
         self.assertNotEmpty(compute_hosts)
         return compute_hosts[0]
 
-    def add_compute_host_to_aggregate_zone(self,agg_id,host_name):
-        ret_val= self.cliclient.nova(action='aggregate-add-host', params=agg_id + ' ' + host_name)
-        LOG.info("return value of adding host  %s", ret_val)
+    def add_compute_host_to_aggregate_zone(self, agg_id, host_name):
+        ret_val = self.cliclient.nova(action='aggregate-add-host', params=agg_id + ' ' + host_name)
+        self.assertIn("successfully", ret_val)
+
+    def remove_compute_host_from_aggregate_zone(self, agg_id, host_name):
+        ret_val = self.cliclient.nova(action='aggregate-remove-host', params=agg_id + ' ' + host_name)
+        self.assertIn("successfully", ret_val)
+
+    def delete_host_aggregate(self):
+        ret_val = self.cliclient.nova(action='aggregate-delete', params=self.ag_zone['Id'])
+        self.assertIn("successfully", ret_val)
 
     @test.attr(type="dell")
     def test_nova_host_aggregate_instancecreation(self):
         LOG.info("BEGIN: test_nova_host_aggregate_instancecreation")
-        ag_zone = self.create_host_aggregate()
-        LOG.info("ag_zone id %s", ag_zone['Id'])
-        host_details = self.get_compute_host_details()
-        LOG.info("Host name where will create instances %s", str(host_details['host_name']))
-        self.add_compute_host_to_aggregate_zone(ag_zone['Id'], host_details['host_name'])
+        self.ag_zone = self.create_host_aggregate()
+        LOG.info("ag_zone id %s", self.ag_zone['Id'])
+        self.host_details = self.get_compute_host_details()
+        LOG.info("Host name where will create instances %s", str(self.host_details['host_name']))
+        self.add_compute_host_to_aggregate_zone(self.ag_zone['Id'], self.host_details['host_name'])
+
         self.assertEqual('Hello world!', 'Hello world!')
+
+        # Clean up stuff that you created
+        self.remove_compute_host_from_aggregate_zone(self.ag_zone['Id'], self.host_details['host_name'])
+        self.delete_host_aggregate()
 
     @classmethod
     def resource_cleanup(cls):
