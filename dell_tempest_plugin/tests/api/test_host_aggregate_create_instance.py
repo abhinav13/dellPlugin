@@ -1,4 +1,5 @@
 from dell_tempest_plugin.tests.api import base
+from datetime import timedelta, date, time, datetime
 from tempest import test
 import tempest.lib.cli.base as cli
 import tempest.lib.cli.output_parser as output_parser
@@ -77,15 +78,34 @@ class TestHostAggreagateCreateInstance(base.BaseDellTempestTestCase):
         ret_val = self.cliclient.nova(action='aggregate-delete', params=self.ag_zone['Id'])
         self.assertIn("successfully", ret_val)
 
+    def delete_instance_by_id(self, instance_id):
+        ret_val = self.cliclient.nova(action='delete', params=instance_id)
+        self.assertIn("accepted", ret_val.lower())
+
     def boot_image_on_aggregate_zone(self):
         raw_output = self.cliclient.nova(action='boot', params='--flavor 1'+ ' --image=' + self.boot_image_name +
                                          ' --nic net-id='+self.network_id + ' --availability-zone=' +
-                                         self.ag_zone_name + ' ' + self.getUniqueString('TestInstaci1e'))
+                                         self.ag_zone_name + ' ' + self.getUniqueString('TestInstance'))
         instance_info = output_parser.listing(raw_output)
         LOG.info("Output of boot image %s", instance_info)
-        self.assertNotEmpty(instance_info)
-        return instance_info[0]['Id']
+        instance_id = None
+        instance_id = list(filter(lambda x: str(x['Property']).lower() == 'id', instance_info))
+        LOG.info("Instance information %s", instance_id)
+        self.assertNotEmpty(instance_id)
+        return instance_id[0]['Value']
 
+    def get_state_of_booted_instance(self, instance_id):
+        time_interval = 10
+        wait_until = datetime.now() + timedelta(seconds=time_interval)
+        while datetime.now() < wait_until:
+            ret_val = self.cliclient.nova(action='list')
+            all_instances = output_parser.listing(ret_val)
+            instance_state = list(filter(lambda x: x['ID'] == instance_id, all_instances))
+            self.assertNotEmpty(instance_state)
+            if instance_state[0]['Status'] == 'ACTIVE' and instance_state[0]['Power State'] == 'Running':
+                return True
+
+        return False
 
     @test.attr(type="dell")
     def test_nova_host_aggregate_instancecreation(self):
@@ -103,11 +123,13 @@ class TestHostAggreagateCreateInstance(base.BaseDellTempestTestCase):
         self.boot_image_name = self.get_boot_image_name()
         instance_id = self.boot_image_on_aggregate_zone()
         LOG.info("Booted this image now %s", str(instance_id))
+        self.assertEqual(True,self.get_state_of_booted_instance(instance_id))
         self.assertEqual('Hello world!', 'Hello world!')
 
         # Clean up stuff that you created
-        #self.remove_compute_host_from_aggregate_zone(self.ag_zone['Id'], self.host_details['host_name'])
-        #self.delete_host_aggregate()
+        self.delete_instance_by_id(instance_id)
+        self.remove_compute_host_from_aggregate_zone(self.ag_zone['Id'], self.host_details['host_name'])
+        self.delete_host_aggregate()
 
     @classmethod
     def resource_cleanup(cls):
