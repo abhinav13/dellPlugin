@@ -22,7 +22,11 @@ class TestHostAggreagateCreateInstance(base.BaseDellTempestTestCase):
         self.cliclient = cli.CLIClient(username=self.os_user_name, password=self.os_password, tenant_name=self.os_tenant_name,
                                        uri=self.os_auth_url, cli_dir='/bin/')
         self.ag_zone = ''
+        self.ag_zone_Id = None
+        self.ag_zone_name = None
         self.host_name = None
+        self.network_id = None
+        self.boot_image_name = ''
 
     def create_host_aggregate(self, name="", availabilityzone=""):
         if not name:
@@ -47,6 +51,20 @@ class TestHostAggreagateCreateInstance(base.BaseDellTempestTestCase):
         self.assertNotEmpty(compute_hosts)
         return compute_hosts[0]
 
+    def get_network_id(self, name="public"):
+        raw_output = self.cliclient.openstack(action='network list')
+        all_networks = output_parser.listing(raw_output)
+        public_net = list(filter(lambda x: str(x['Name']).lower() == name, all_networks))
+        self.assertNotEmpty(public_net)
+        return public_net[0]['ID']
+
+    def get_boot_image_name(self, name="cirros-0.3.4-x86_64-disk.img"):
+        raw_output = self.cliclient.openstack(action='image list')
+        all_images = output_parser.listing(raw_output)
+        boot_img = list(filter(lambda x: str(x['Name']).lower() == name, all_images))
+        self.assertNotEmpty(boot_img)
+        return boot_img[0]['Name']
+
     def add_compute_host_to_aggregate_zone(self, agg_id, host_name):
         ret_val = self.cliclient.nova(action='aggregate-add-host', params=agg_id + ' ' + host_name)
         self.assertIn("successfully", ret_val)
@@ -59,20 +77,37 @@ class TestHostAggreagateCreateInstance(base.BaseDellTempestTestCase):
         ret_val = self.cliclient.nova(action='aggregate-delete', params=self.ag_zone['Id'])
         self.assertIn("successfully", ret_val)
 
+    def boot_image_on_aggregate_zone(self):
+        raw_output = self.cliclient.nova(action='boot', params='--flavor 1'+ ' --image=' + self.boot_image_name +
+                                         ' --nic net-id='+self.network_id + ' --availability-zone=' +
+                                         self.ag_zone_name + ' ' + self.getUniqueString('TestInstaci1e'))
+        instance_info = output_parser.listing(raw_output)
+        LOG.info("Output of boot image %s", instance_info)
+        self.assertNotEmpty(instance_info)
+        return instance_info[0]['Id']
+
+
     @test.attr(type="dell")
     def test_nova_host_aggregate_instancecreation(self):
         LOG.info("BEGIN: test_nova_host_aggregate_instancecreation")
         self.ag_zone = self.create_host_aggregate()
-        LOG.info("ag_zone id %s", self.ag_zone['Id'])
+        self.ag_zone_Id = self.ag_zone['Id']
+        self.ag_zone_name = self.ag_zone['Availability Zone']
+        LOG.info("ag_zone id %s", self.ag_zone_Id)
         self.host_details = self.get_compute_host_details()
         LOG.info("Host name where will create instances %s", str(self.host_details['host_name']))
-        self.add_compute_host_to_aggregate_zone(self.ag_zone['Id'], self.host_details['host_name'])
+        self.add_compute_host_to_aggregate_zone(self.ag_zone_Id, self.host_details['host_name'])
 
+        # Now get network image
+        self.network_id = self.get_network_id()
+        self.boot_image_name = self.get_boot_image_name()
+        instance_id = self.boot_image_on_aggregate_zone()
+        LOG.info("Booted this image now %s", str(instance_id))
         self.assertEqual('Hello world!', 'Hello world!')
 
         # Clean up stuff that you created
-        self.remove_compute_host_from_aggregate_zone(self.ag_zone['Id'], self.host_details['host_name'])
-        self.delete_host_aggregate()
+        #self.remove_compute_host_from_aggregate_zone(self.ag_zone['Id'], self.host_details['host_name'])
+        #self.delete_host_aggregate()
 
     @classmethod
     def resource_cleanup(cls):
